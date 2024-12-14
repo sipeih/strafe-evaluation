@@ -4,6 +4,9 @@ import { Chart, registerables } from 'chart.js'
 import { Bar } from 'solid-chartjs'
 import { listen } from '@tauri-apps/api/event'
 
+const lateStrifeSound = new Audio('/sounds/lateStrifeSound.wav');
+lateStrifeSound.volume = 0.3;
+
 function draw_time(time) {
   return (time / 1000).toFixed(0) + " ms"
 }
@@ -345,7 +348,8 @@ function App() {
             setEarlyStrafes(a => [strafe.duration, ...a])
             break;
           case "Late":
-            setLateStrafes(a => [strafe.duration, ...a])
+            setLateStrafes(a => [strafe.duration, ...a]);
+            lateStrifeSound.play().catch(console.error);
             break;
           case "Perfect":
             setPerfectStrafes(a => [strafe.duration, ...a])
