@@ -349,6 +349,7 @@ function App() {
             break;
           case "Late":
             setLateStrafes(a => [strafe.duration, ...a]);
+            lateStrifeSound.currentTime = 0;
             lateStrifeSound.play().catch(console.error);
             break;
           case "Perfect":
