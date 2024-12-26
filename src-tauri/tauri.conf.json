@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "PatrikZeros-Strafe-Evaluation",
+    "productName": "Strafe-Evaluation",
     "version": "1.2.0"
   },
   "tauri": {
@@ -19,7 +19,7 @@
     },
     "windows": [
       {
-        "title": "PatrikZero's Strafe Evaluation",
+        "title": "Strafe Evaluation",
         "width": 800,
         "height": 620,
         "resizable": false

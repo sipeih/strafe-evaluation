@@ -349,6 +349,7 @@ function App() {
             break;
           case "Late":
             setLateStrafes(a => [strafe.duration, ...a]);
+            lateStrifeSound.currentTime = 0;
             lateStrifeSound.play().catch(console.error);
             break;
           case "Perfect":
@@ -372,7 +373,7 @@ function App() {
       {/* 1 */}
       <div className="flex justify-center items-center select-none pointer-events-none">
 
-        <h1 className="mr-3 drop-shadow-lg  py-4 text-4xl pointer-events-none font-bold text-center text-bright text-stroke italic">PatrikZero's</h1>
+        <h1 className="mr-3 drop-shadow-lg  py-4 text-4xl pointer-events-none font-bold text-center text-bright text-stroke italic">SMNH Improved</h1>
         <h1 className="  py-4 text-4xl font-bold text-center pointer-events-none ">Strafe Evaluation</h1>
       </div>
 
