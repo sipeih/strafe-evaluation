@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::thread::sleep;
+use std::thread::{self, sleep};
 use std::time::{Duration, SystemTime};
 use tauri::AppHandle;
 use tauri::Manager;
@@ -49,16 +49,21 @@ fn handle_strafe_emission(
 
     if !gun_mode {
         // Normal mode: emit immediately
-        app.emit_all("strafe", payload).unwrap();
+        if let Err(e) = app.emit_all("strafe", payload) {
+            eprintln!("Failed to emit strafe: {}", e);
+        }
     } else {
         // Gun fire mode
         if weapon_active {
             // Store as pending
-            let mut pending = state.pending_strafe.lock().unwrap();
-            *pending = Some(PendingStrafe {
-                payload,
-                timestamp: SystemTime::now(),
-            });
+            if let Ok(mut pending) = state.pending_strafe.lock() {
+                *pending = Some(PendingStrafe {
+                    payload,
+                    timestamp: SystemTime::now(),
+                });
+            } else {
+                eprintln!("Failed to lock pending_strafe mutex");
+            }
         }
         // If weapon not active, ignore strafe
     }
@@ -133,7 +138,9 @@ fn main() {
             let handle = app.handle();
             let state = game_state.clone();
 
-            tauri::async_runtime::spawn(async move {
+            // Spawn on a dedicated OS thread instead of Tauri's async runtime
+            // This prevents blocking the async runtime with the infinite loop
+            thread::spawn(move || {
                 let mut left_pressed = false;
                 let mut right_pressed = false;
                 let mut both_pressed_time: Option<SystemTime> = None;
@@ -168,25 +175,29 @@ fn main() {
                     if current_left_click && !last_left_click {
                         // Mouse Pressed
                         if state.gun_fire_mode.load(Ordering::Relaxed) {
-                            let mut pending_lock = state.pending_strafe.lock().unwrap();
-                            if let Some(pending) = &*pending_lock {
-                                match pending.timestamp.elapsed() {
-                                    Ok(elapsed) => {
-                                        let elapsed_ms = elapsed.as_millis();
-                                        if elapsed_ms < SHOT_WINDOW_MS {
-                                            // Valid shot!
-                                            let mut final_payload = pending.payload.clone();
-                                            final_payload.shot_delay = Some(elapsed_ms);
-                                            handle
-                                                .emit_all("strafe", final_payload)
-                                                .unwrap();
-                                            
-                                            // Clear pending
-                                            *pending_lock = None;
+                            if let Ok(mut pending_lock) = state.pending_strafe.lock() {
+                                if let Some(pending) = &*pending_lock {
+                                    match pending.timestamp.elapsed() {
+                                        Ok(elapsed) => {
+                                            let elapsed_ms = elapsed.as_millis();
+                                            if elapsed_ms < SHOT_WINDOW_MS {
+                                                // Valid shot!
+                                                let mut final_payload = pending.payload.clone();
+                                                final_payload.shot_delay = Some(elapsed_ms);
+                                                
+                                                if let Err(e) = handle.emit_all("strafe", final_payload) {
+                                                    eprintln!("Failed to emit strafe: {}", e);
+                                                }
+                                                
+                                                // Clear pending
+                                                *pending_lock = None;
+                                            }
                                         }
+                                        Err(_) => {}
                                     }
-                                    Err(_) => {}
                                 }
+                            } else {
+                                eprintln!("Failed to lock pending_strafe mutex (mouse click)");
                             }
                         }
                     }
@@ -194,24 +205,30 @@ fn main() {
 
                     // 3. Clean up old pending strafes
                     if state.gun_fire_mode.load(Ordering::Relaxed) {
-                         let mut pending_lock = state.pending_strafe.lock().unwrap();
+                         // Use a separate scope or check to avoid holding lock too long
                          let mut should_clear = false;
-                         if let Some(pending) = &*pending_lock {
-                             if let Ok(elapsed) = pending.timestamp.elapsed() {
-                                 if elapsed.as_millis() >= SHOT_WINDOW_MS {
-                                     should_clear = true;
+                         if let Ok(pending_lock) = state.pending_strafe.lock() {
+                             if let Some(pending) = &*pending_lock {
+                                 if let Ok(elapsed) = pending.timestamp.elapsed() {
+                                     if elapsed.as_millis() >= SHOT_WINDOW_MS {
+                                         should_clear = true;
+                                     }
                                  }
                              }
                          }
+                         
                          if should_clear {
-                             *pending_lock = None;
+                             if let Ok(mut pending_lock) = state.pending_strafe.lock() {
+                                 *pending_lock = None;
+                             }
                          }
                     } else {
                         // Ensure pending is clear if mode is off
-                        let mut pending_lock = state.pending_strafe.lock().unwrap();
-                         if pending_lock.is_some() {
-                             *pending_lock = None;
-                         }
+                        if let Ok(mut pending_lock) = state.pending_strafe.lock() {
+                             if pending_lock.is_some() {
+                                 *pending_lock = None;
+                             }
+                        }
                     }
 
 
@@ -219,7 +236,9 @@ fn main() {
                     if right_pressed && !DKey.is_pressed() && !RightKey.is_pressed() {
                         // D released
                         right_pressed = false;
-                        let _ = handle.emit_all("d-released", ());
+                        if let Err(e) = handle.emit_all("d-released", ()) {
+                             eprintln!("Failed to emit d-released: {}", e);
+                        }
                         right_released_time = Some(SystemTime::now());
                     }
                     if left_pressed
@@ -229,7 +248,9 @@ fn main() {
                     {
                         // A released
                         left_pressed = false;
-                        let _ = handle.emit_all("a-released", ());
+                        if let Err(e) = handle.emit_all("a-released", ()) {
+                            eprintln!("Failed to emit a-released: {}", e);
+                        }
                         left_released_time = Some(SystemTime::now());
                     }
 
@@ -240,7 +261,9 @@ fn main() {
                     {
                         // A pressed
                         left_pressed = true;
-                        let _ = handle.emit_all("a-pressed", ());
+                        if let Err(e) = handle.emit_all("a-pressed", ()) {
+                            eprintln!("Failed to emit a-pressed: {}", e);
+                        }
                         match right_released_time {
                             None => {}
                             Some(x) => match x.elapsed() {
@@ -260,7 +283,9 @@ fn main() {
                     if (DKey.is_pressed() || RightKey.is_pressed()) && !right_pressed {
                         // D pressed
                         right_pressed = true;
-                        let _ = handle.emit_all("d-pressed", ());
+                        if let Err(e) = handle.emit_all("d-pressed", ()) {
+                            eprintln!("Failed to emit d-pressed: {}", e);
+                        }
                         match left_released_time {
                             None => {}
                             Some(x) => match x.elapsed() {
