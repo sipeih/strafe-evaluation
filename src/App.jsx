@@ -3,15 +3,14 @@ import "./App.css";
 import { Chart, registerables } from 'chart.js'
 import { Bar } from 'solid-chartjs'
 import { listen } from '@tauri-apps/api/event'
-
-const lateStrifeSound = new Audio('/sounds/lateStrifeSound.wav');
-lateStrifeSound.volume = 0.3;
+import { invoke } from '@tauri-apps/api/tauri'
 
 function draw_time(time) {
   return (time / 1000).toFixed(0) + " ms"
 }
 
 function getMeanAndVar(arr) {
+  if (arr.length === 0) return { average: 0, std_deviation: 0 };
 
   var sum = arr.reduce(function (pre, cur) {
     return pre + cur;
@@ -53,7 +52,7 @@ function getStats(duration_array) {
 
 function getOccurance(duration_array) {
   if (!duration_array || duration_array.length == 0) {
-    console.log("Array too small for graph")
+    // console.log("Array too small for graph")
     return [0]
   }
   let out = new Array(41).fill(0);
@@ -141,10 +140,11 @@ const MyChart = (props) => {
 function Stats(props) {
   const [stats, setStats] = createSignal({ alls: getStats([]), early: getStats([]), late: getStats([]) }, { equals: false });
   const [perfectCount, setPerfectCount] = createSignal(0)
+  const [avgShotDelay, setAvgShotDelay] = createSignal(0);
 
 
   createEffect(() => {
-    const { earlyStrafes, lateStrafes, perfectStrafes } = props;
+    const { earlyStrafes, lateStrafes, perfectStrafes, shotDelays } = props;
 
     setPerfectCount(perfectStrafes.length)
     setStats((prev) => {
@@ -153,9 +153,14 @@ function Stats(props) {
       prev.late = getStats(lateStrafes)
       return prev
     })
+
+    if (shotDelays && shotDelays.length > 0) {
+      const sum = shotDelays.reduce((a, b) => a + b, 0);
+      setAvgShotDelay(sum / shotDelays.length);
+    } else {
+      setAvgShotDelay(0);
+    }
   })
-
-
 
 
   return (
@@ -206,8 +211,15 @@ function Stats(props) {
           </tr>
         </tbody>
       </table>
-      <div className=" italic font-bold text-xl pt-4">
-        <h1>Perfect {perfectCount() + "x"}</h1>
+      <div className="flex flex-col items-center pt-4 gap-2">
+        <div className="italic font-bold text-xl">
+          <h1>Perfect {perfectCount() + "x"}</h1>
+        </div>
+        {props.gunFireMode && (
+           <div className="font-bold text-lg text-accent">
+             <h2>Avg Shot Delay: {avgShotDelay().toFixed(0)} ms</h2>
+           </div>
+        )}
       </div>
     </div>
   )
@@ -329,12 +341,21 @@ function App() {
   const [earlyStrafes, setEarlyStrafes] = createSignal([]);
   const [lateStrafes, setLateStrafes] = createSignal([]);
   const [perfectStrafes, setPerfectStrafes] = createSignal([]);
+  const [shotDelays, setShotDelays] = createSignal([]);
+  const [gunFireMode, setGunFireMode] = createSignal(true);
 
   function resetStrafes() {
     setEarlyStrafes([]);
     setLateStrafes([]);
     setPerfectStrafes([]);
     setTotalStrafes([]);
+    setShotDelays([]);
+  }
+
+  async function toggleGunFireMode() {
+    const newVal = !gunFireMode();
+    setGunFireMode(newVal);
+    await invoke('set_gun_fire_mode', { enabled: newVal });
   }
 
   createEffect(() => {
@@ -342,14 +363,22 @@ function App() {
     const setupListeners = async () => {
       unlistenStrafe = await listen('strafe', (event) => {
 
-        let strafe = { type: event.payload.strafe_type, duration: event.payload.duration }
+        let strafe = { 
+            type: event.payload.strafe_type, 
+            duration: event.payload.duration,
+            shot_delay: event.payload.shot_delay 
+        }
+        
+        if (strafe.shot_delay !== null && strafe.shot_delay !== undefined) {
+             setShotDelays(a => [strafe.shot_delay, ...a]);
+        }
+
         switch (strafe.type) {
           case "Early":
             setEarlyStrafes(a => [strafe.duration, ...a])
             break;
           case "Late":
             setLateStrafes(a => [strafe.duration, ...a]);
-            lateStrifeSound.play().catch(console.error);
             break;
           case "Perfect":
             setPerfectStrafes(a => [strafe.duration, ...a])
@@ -368,11 +397,10 @@ function App() {
     setupListeners();
   });
   return (
-    <div class="w-screen h-screen bg-bright text-dark flex flex-col">
+    <div class="w-full h-screen bg-bright text-dark flex flex-col">
       {/* 1 */}
-      <div className="flex justify-center items-center select-none pointer-events-none">
-
-        <h1 className="mr-3 drop-shadow-lg  py-4 text-4xl pointer-events-none font-bold text-center text-bright text-stroke italic">PatrikZero's</h1>
+      <div className="flex justify-center items-center select-none pointer-events-none relative">
+        <h1 className="mr-3 drop-shadow-lg  py-4 text-4xl pointer-events-none font-bold text-center text-bright text-stroke italic">SMNH's</h1>
         <h1 className="  py-4 text-4xl font-bold text-center pointer-events-none ">Strafe Evaluation</h1>
       </div>
 
@@ -380,13 +408,27 @@ function App() {
       <div className=" justify-between flex-grow flex">
         {/* A */}
         <div className="flex flex-col rounded-xl border-t border-white m-4 p-4 w-[50%] bg-secondary/50 shadow-xl">
-          <div className="flex justify-between mb-2">
+          <div className="flex justify-between mb-2 items-center">
             <h2 className="select-none text-2xl font-bold">Statistics</h2>
-            <button className="text-bright select-none shadow-md px-2 rounded-md bg-primary hover:scale-110 " type="submit" onClick={() => {
-              resetStrafes()
-            }}>Reset</button>
+            <div className="flex gap-2">
+                 <button 
+                    className={`text-bright select-none shadow-md px-2 rounded-md ${gunFireMode() ? 'bg-accent' : 'bg-gray-400'} hover:scale-105 transition-all`}
+                    onClick={toggleGunFireMode}
+                 >
+                    Gun Fire Only: {gunFireMode() ? "ON" : "OFF"}
+                 </button>
+                <button className="text-bright select-none shadow-md px-2 rounded-md bg-primary hover:scale-110 " type="submit" onClick={() => {
+                resetStrafes()
+                }}>Reset</button>
+            </div>
           </div>
-          <Stats earlyStrafes={earlyStrafes()} lateStrafes={lateStrafes()} perfectStrafes={perfectStrafes()}></Stats>
+          <Stats 
+            earlyStrafes={earlyStrafes()} 
+            lateStrafes={lateStrafes()} 
+            perfectStrafes={perfectStrafes()} 
+            shotDelays={shotDelays()}
+            gunFireMode={gunFireMode()}
+          ></Stats>
         </div>
         {/* B */}
         <div className="flex  flex-col m-4 justify-center rounded-xl w-[50%] ">
@@ -395,16 +437,19 @@ function App() {
       </div>
 
       {/* 3 */}
-      <div className="h-32 mb-4 flex items-center justify-center">
+      <div className="h-24 mb-4 flex items-center justify-center">
         <WASD></WASD>
       </div>
       {/* 4 */}
-      <div className="flex  flex-row p-2 bg-accent/25 h-20 overflow-clip  w-full">
+      <div className="flex  flex-row p-2 bg-accent/25 h-32 overflow-x-auto w-full items-center">
 
         <For each={totalStrafes()}>{(strafe, i) =>
-          <div className="flex shadow-md select-none flex-col border-bright/75 border-t bg-secondary/45 rounded-md  justify-center items-center  min-w-16 mr-2 ">
-            <p className="font-bold text-center">{strafe.type}</p>
-            <p className="text-center">{draw_time(strafe.duration)}</p>
+          <div className="flex shadow-md select-none flex-col border-bright/75 border-t bg-secondary/45 rounded-md  justify-center items-center  min-w-20 mx-1 p-1 h-20">
+            <p className="font-bold text-center text-sm">{strafe.type}</p>
+            <p className="text-center text-xs">{draw_time(strafe.duration)}</p>
+            {strafe.shot_delay != null && (
+                 <p className="text-center text-xs text-bright font-semibold mt-1">Shot: {strafe.shot_delay}ms</p>
+            )}
           </div>
         }</For>
       </div>
