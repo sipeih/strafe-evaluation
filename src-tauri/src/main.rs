@@ -155,8 +155,16 @@ fn main() {
                     // Tickrate
                     sleep(Duration::from_millis(1));
 
-                    // 1. Weapon/Utility Key Detection
-                    if Numrow1Key.is_pressed() || Numrow2Key.is_pressed() || QKey.is_pressed() {
+                    // 1. Weapon/Utility Key Detection - REMOVED per user request
+                    // We want detection to be ALWAYS active in gun fire mode, regardless of held weapon.
+                    // Since weapon_active is initialized to true, we simply don't modify it here.
+                    /*
+                    let q_pressed = if is_azerty {
+                        AKey.is_pressed()
+                    } else {
+                        QKey.is_pressed()
+                    };
+                    if Numrow1Key.is_pressed() || Numrow2Key.is_pressed() || q_pressed {
                         state.weapon_active.store(true, Ordering::Relaxed);
                     }
                     if Numrow3Key.is_pressed()
@@ -169,6 +177,7 @@ fn main() {
                     {
                         state.weapon_active.store(false, Ordering::Relaxed);
                     }
+                    */
 
                     // 2. Gun Fire Detection (Left Click)
                     let current_left_click = LeftButton.is_pressed();

@@ -141,6 +141,8 @@ function Stats(props) {
   const [stats, setStats] = createSignal({ alls: getStats([]), early: getStats([]), late: getStats([]) }, { equals: false });
   const [perfectCount, setPerfectCount] = createSignal(0)
   const [avgShotDelay, setAvgShotDelay] = createSignal(0);
+  const [goodRate, setGoodRate] = createSignal(0);
+  const [perfectRate, setPerfectRate] = createSignal(0);
 
 
   createEffect(() => {
@@ -153,6 +155,15 @@ function Stats(props) {
       prev.late = getStats(lateStrafes)
       return prev
     })
+    
+    const total = earlyStrafes.length + lateStrafes.length + perfectStrafes.length;
+    if (total > 0) {
+        setGoodRate(((total - lateStrafes.length) / total * 100).toFixed(2));
+        setPerfectRate((perfectStrafes.length / total * 100).toFixed(2));
+    } else {
+        setGoodRate(0);
+        setPerfectRate(0);
+    }
 
     if (shotDelays && shotDelays.length > 0) {
       const sum = shotDelays.reduce((a, b) => a + b, 0);
@@ -203,8 +214,12 @@ function Stats(props) {
             <td>{draw_time(stats().early.std_deviation)}</td>
             <td>{draw_time(stats().late.std_deviation)}</td>
           </tr>
-          <tr>
-            <th>Samples</th>
+          <tr 
+            onClick={props.onCopyMetrics} 
+            className="cursor-pointer hover:bg-white/10 active:bg-white/20 transition-colors"
+            title="Click to copy metrics: All, Early, Late;"
+          >
+            <th>Samples 📋</th>
             <td>{(stats().alls.samples)}</td>
             <td>{(stats().early.samples)}</td>
             <td>{(stats().late.samples)}</td>
@@ -214,6 +229,10 @@ function Stats(props) {
       <div className="flex flex-col items-center pt-4 gap-2">
         <div className="italic font-bold text-xl">
           <h1>Perfect {perfectCount() + "x"}</h1>
+        </div>
+        <div className="font-bold text-lg flex gap-4">
+             <h2>Good: {goodRate()}%</h2>
+             <h2>Perfect: {perfectRate()}%</h2>
         </div>
         {props.gunFireMode && (
            <div className="font-bold text-lg text-accent">
@@ -358,6 +377,11 @@ function App() {
     await invoke('set_gun_fire_mode', { enabled: newVal });
   }
 
+  function copyMetrics() {
+    const text = `${totalStrafes().length}, ${earlyStrafes().length}, ${lateStrafes().length};`;
+    navigator.clipboard.writeText(text);
+  }
+
   createEffect(() => {
     let unlistenStrafe
     const setupListeners = async () => {
@@ -428,6 +452,7 @@ function App() {
             perfectStrafes={perfectStrafes()} 
             shotDelays={shotDelays()}
             gunFireMode={gunFireMode()}
+            onCopyMetrics={copyMetrics}
           ></Stats>
         </div>
         {/* B */}
