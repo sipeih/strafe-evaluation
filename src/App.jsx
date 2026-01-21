@@ -3,7 +3,6 @@ import "./App.css";
 import { Chart, registerables } from 'chart.js'
 import { Bar } from 'solid-chartjs'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/tauri'
 
 function draw_time(time) {
   return (time / 1000).toFixed(0) + " ms"
@@ -141,12 +140,15 @@ function Stats(props) {
   const [stats, setStats] = createSignal({ alls: getStats([]), early: getStats([]), late: getStats([]) }, { equals: false });
   const [perfectCount, setPerfectCount] = createSignal(0)
   const [avgShotDelay, setAvgShotDelay] = createSignal(0);
-  const [goodRate, setGoodRate] = createSignal(0);
-  const [perfectRate, setPerfectRate] = createSignal(0);
+  
+  // New metrics
+  const [accurateRate, setAccurateRate] = createSignal(0);
+  const [earlyAccuracy, setEarlyAccuracy] = createSignal("0%");
+  const [lateAccuracy, setLateAccuracy] = createSignal("0%");
 
 
   createEffect(() => {
-    const { earlyStrafes, lateStrafes, perfectStrafes, shotDelays } = props;
+    const { earlyStrafes, lateStrafes, perfectStrafes, shotDelays, totalStrafes } = props;
 
     setPerfectCount(perfectStrafes.length)
     setStats((prev) => {
@@ -156,14 +158,59 @@ function Stats(props) {
       return prev
     })
     
-    const total = earlyStrafes.length + lateStrafes.length + perfectStrafes.length;
-    if (total > 0) {
-        setGoodRate(((total - lateStrafes.length) / total * 100).toFixed(2));
-        setPerfectRate((perfectStrafes.length / total * 100).toFixed(2));
+    // Calculate Accuracy based on new definitions
+    // Late: Accurate if (duration/1000 + shot_delay) >= 230ms
+    // Early/Perfect: Accurate if shot_delay >= 80ms
+    let accurateCount = 0;
+    let totalCount = totalStrafes.length;
+    let earlyTotal = 0;
+    let earlyAccurate = 0;
+    let lateTotal = 0;
+    let lateAccurate = 0;
+
+    totalStrafes.forEach(strafe => {
+        const shotDelay = strafe.shot_delay || 0;
+        const durationMs = strafe.duration / 1000;
+        let isAccurate = false;
+
+        if (strafe.type === "Late") {
+            lateTotal++;
+            // Total time since counter key pressed = Overlap Duration + Shot Delay
+            if ((durationMs + shotDelay) >= 230) {
+                isAccurate = true;
+                lateAccurate++;
+            }
+        } else {
+            // Early or Perfect
+            earlyTotal++;
+            // Time since counter key pressed = Shot Delay
+            if (shotDelay >= 80) {
+                isAccurate = true;
+                earlyAccurate++;
+            }
+        }
+
+        if (isAccurate) accurateCount++;
+    });
+
+    if (totalCount > 0) {
+        setAccurateRate((accurateCount / totalCount * 100).toFixed(2));
     } else {
-        setGoodRate(0);
-        setPerfectRate(0);
+        setAccurateRate(0);
     }
+
+    if (earlyTotal > 0) {
+        setEarlyAccuracy(`${(earlyAccurate / earlyTotal * 100).toFixed(1)}%`);
+    } else {
+        setEarlyAccuracy("0%");
+    }
+
+    if (lateTotal > 0) {
+        setLateAccuracy(`${(lateAccurate / lateTotal * 100).toFixed(1)}%`);
+    } else {
+        setLateAccuracy("0%");
+    }
+
 
     if (shotDelays && shotDelays.length > 0) {
       const sum = shotDelays.reduce((a, b) => a + b, 0);
@@ -231,14 +278,15 @@ function Stats(props) {
           <h1>Perfect {perfectCount() + "x"}</h1>
         </div>
         <div className="font-bold text-lg flex gap-4">
-             <h2>Good: {goodRate()}%</h2>
-             <h2>Perfect: {perfectRate()}%</h2>
+             <h2>Accurate: {accurateRate()}%</h2>
         </div>
-        {props.gunFireMode && (
-           <div className="font-bold text-lg text-accent">
-             <h2>Avg Shot Delay: {avgShotDelay().toFixed(0)} ms</h2>
-           </div>
-        )}
+        <div className="text-sm flex gap-4 opacity-80">
+             <span>Early Acc: {earlyAccuracy()}</span>
+             <span>Late Acc: {lateAccuracy()}</span>
+        </div>
+        <div className="font-bold text-lg text-accent">
+            <h2>Avg Shot Delay: {avgShotDelay().toFixed(0)} ms</h2>
+        </div>
       </div>
     </div>
   )
@@ -269,7 +317,6 @@ function WASD() {
       unlistenReleaseD = await listen('d-released', (event) => {
         setDPressed(false);
       });
-
     };
 
     onCleanup(() => {
@@ -361,7 +408,6 @@ function App() {
   const [lateStrafes, setLateStrafes] = createSignal([]);
   const [perfectStrafes, setPerfectStrafes] = createSignal([]);
   const [shotDelays, setShotDelays] = createSignal([]);
-  const [gunFireMode, setGunFireMode] = createSignal(true);
 
   function resetStrafes() {
     setEarlyStrafes([]);
@@ -369,12 +415,6 @@ function App() {
     setPerfectStrafes([]);
     setTotalStrafes([]);
     setShotDelays([]);
-  }
-
-  async function toggleGunFireMode() {
-    const newVal = !gunFireMode();
-    setGunFireMode(newVal);
-    await invoke('set_gun_fire_mode', { enabled: newVal });
   }
 
   function copyMetrics() {
@@ -435,12 +475,6 @@ function App() {
           <div className="flex justify-between mb-2 items-center">
             <h2 className="select-none text-2xl font-bold">Statistics</h2>
             <div className="flex gap-2">
-                 <button 
-                    className={`text-bright select-none shadow-md px-2 rounded-md ${gunFireMode() ? 'bg-accent' : 'bg-gray-400'} hover:scale-105 transition-all`}
-                    onClick={toggleGunFireMode}
-                 >
-                    Gun Fire Only: {gunFireMode() ? "ON" : "OFF"}
-                 </button>
                 <button className="text-bright select-none shadow-md px-2 rounded-md bg-primary hover:scale-110 " type="submit" onClick={() => {
                 resetStrafes()
                 }}>Reset</button>
@@ -451,7 +485,7 @@ function App() {
             lateStrafes={lateStrafes()} 
             perfectStrafes={perfectStrafes()} 
             shotDelays={shotDelays()}
-            gunFireMode={gunFireMode()}
+            totalStrafes={totalStrafes()}
             onCopyMetrics={copyMetrics}
           ></Stats>
         </div>

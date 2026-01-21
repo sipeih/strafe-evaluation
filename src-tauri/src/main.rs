@@ -3,7 +3,6 @@
 use inputbot::KeybdKey::*;
 use inputbot::MouseButton::*;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use std::thread::{self, sleep};
@@ -12,7 +11,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 use winapi::um::winuser::GetKeyboardLayout;
 
-const SHOT_WINDOW_MS: u128 = 300;
+const SHOT_WINDOW_MS: u128 = 500;
 
 #[derive(Clone, serde::Serialize)]
 struct Payload {
@@ -28,44 +27,23 @@ struct PendingStrafe {
 }
 
 struct GameState {
-    gun_fire_mode: AtomicBool,
-    weapon_active: AtomicBool,
     pending_strafe: Mutex<Option<PendingStrafe>>,
-}
-
-#[tauri::command]
-fn set_gun_fire_mode(state: tauri::State<Arc<GameState>>, enabled: bool) {
-    state.gun_fire_mode.store(enabled, Ordering::Relaxed);
 }
 
 // Helper to handle emission logic
 fn handle_strafe_emission(
-    app: &AppHandle,
     state: &Arc<GameState>,
     payload: Payload,
 ) {
-    let gun_mode = state.gun_fire_mode.load(Ordering::Relaxed);
-    let weapon_active = state.weapon_active.load(Ordering::Relaxed);
-
-    if !gun_mode {
-        // Normal mode: emit immediately
-        if let Err(e) = app.emit_all("strafe", payload) {
-            eprintln!("Failed to emit strafe: {}", e);
-        }
+    // Gun fire mode (ALWAYS ON)
+    // Store as pending
+    if let Ok(mut pending) = state.pending_strafe.lock() {
+        *pending = Some(PendingStrafe {
+            payload,
+            timestamp: SystemTime::now(),
+        });
     } else {
-        // Gun fire mode
-        if weapon_active {
-            // Store as pending
-            if let Ok(mut pending) = state.pending_strafe.lock() {
-                *pending = Some(PendingStrafe {
-                    payload,
-                    timestamp: SystemTime::now(),
-                });
-            } else {
-                eprintln!("Failed to lock pending_strafe mutex");
-            }
-        }
-        // If weapon not active, ignore strafe
+        eprintln!("Failed to lock pending_strafe mutex");
     }
 }
 
@@ -93,7 +71,7 @@ fn eval_understrafe(
     }
 
     if let Some(p) = payload {
-        handle_strafe_emission(&app, &state, p);
+        handle_strafe_emission(&state, p);
     }
     *released_time = None;
 }
@@ -105,13 +83,13 @@ fn eval_overstrafe(
     state: Arc<GameState>,
 ) {
     let time_passed = elapsed.as_micros();
-    if time_passed < (200 * 1000) {
+    if time_passed < (500 * 1000) {
         let payload = Payload {
             strafe_type: "Late".into(),
             duration: time_passed,
             shot_delay: None,
         };
-        handle_strafe_emission(&app, &state, payload);
+        handle_strafe_emission(&state, payload);
     }
     *both_pressed_time = None;
 }
@@ -126,14 +104,11 @@ fn is_azerty_layout() -> bool {
 
 fn main() {
     let game_state = Arc::new(GameState {
-        gun_fire_mode: AtomicBool::new(true),
-        weapon_active: AtomicBool::new(true),
         pending_strafe: Mutex::new(None),
     });
 
     tauri::Builder::default()
         .manage(game_state.clone())
-        .invoke_handler(tauri::generate_handler![set_gun_fire_mode])
         .setup(move |app| {
             let handle = app.handle();
             let state = game_state.clone();
@@ -155,93 +130,57 @@ fn main() {
                     // Tickrate
                     sleep(Duration::from_millis(1));
 
-                    // 1. Weapon/Utility Key Detection - REMOVED per user request
-                    // We want detection to be ALWAYS active in gun fire mode, regardless of held weapon.
-                    // Since weapon_active is initialized to true, we simply don't modify it here.
-                    /*
-                    let q_pressed = if is_azerty {
-                        AKey.is_pressed()
-                    } else {
-                        QKey.is_pressed()
-                    };
-                    if Numrow1Key.is_pressed() || Numrow2Key.is_pressed() || q_pressed {
-                        state.weapon_active.store(true, Ordering::Relaxed);
-                    }
-                    if Numrow3Key.is_pressed()
-                        || Numrow4Key.is_pressed()
-                        || Numrow5Key.is_pressed()
-                        || ZKey.is_pressed()
-                        || XKey.is_pressed()
-                        || CKey.is_pressed()
-                        || VKey.is_pressed()
-                    {
-                        state.weapon_active.store(false, Ordering::Relaxed);
-                    }
-                    */
-
-                    // 2. Gun Fire Detection (Left Click)
+                    // 1. Gun Fire Detection (Left Click)
                     let current_left_click = LeftButton.is_pressed();
                     if current_left_click && !last_left_click {
                         // Mouse Pressed
-                        if state.gun_fire_mode.load(Ordering::Relaxed) {
-                            if let Ok(mut pending_lock) = state.pending_strafe.lock() {
-                                if let Some(pending) = &*pending_lock {
-                                    match pending.timestamp.elapsed() {
-                                        Ok(elapsed) => {
-                                            let elapsed_ms = elapsed.as_millis();
-                                            if elapsed_ms < SHOT_WINDOW_MS {
-                                                // Valid shot!
-                                                let mut final_payload = pending.payload.clone();
-                                                final_payload.shot_delay = Some(elapsed_ms);
-                                                
-                                                if let Err(e) = handle.emit_all("strafe", final_payload) {
-                                                    eprintln!("Failed to emit strafe: {}", e);
-                                                }
-                                                
-                                                // Clear pending
-                                                *pending_lock = None;
+                        if let Ok(mut pending_lock) = state.pending_strafe.lock() {
+                            if let Some(pending) = &*pending_lock {
+                                match pending.timestamp.elapsed() {
+                                    Ok(elapsed) => {
+                                        let elapsed_ms = elapsed.as_millis();
+                                        if elapsed_ms < SHOT_WINDOW_MS {
+                                            // Valid shot!
+                                            let mut final_payload = pending.payload.clone();
+                                            final_payload.shot_delay = Some(elapsed_ms);
+                                            
+                                            if let Err(e) = handle.emit_all("strafe", final_payload) {
+                                                eprintln!("Failed to emit strafe: {}", e);
                                             }
+                                            
+                                            // Clear pending
+                                            *pending_lock = None;
                                         }
-                                        Err(_) => {}
                                     }
+                                    Err(_) => {}
                                 }
-                            } else {
-                                eprintln!("Failed to lock pending_strafe mutex (mouse click)");
                             }
+                        } else {
+                            eprintln!("Failed to lock pending_strafe mutex (mouse click)");
                         }
                     }
                     last_left_click = current_left_click;
 
-                    // 3. Clean up old pending strafes
-                    if state.gun_fire_mode.load(Ordering::Relaxed) {
-                         // Use a separate scope or check to avoid holding lock too long
-                         let mut should_clear = false;
-                         if let Ok(pending_lock) = state.pending_strafe.lock() {
-                             if let Some(pending) = &*pending_lock {
-                                 if let Ok(elapsed) = pending.timestamp.elapsed() {
-                                     if elapsed.as_millis() >= SHOT_WINDOW_MS {
-                                         should_clear = true;
-                                     }
-                                 }
-                             }
-                         }
-                         
-                         if should_clear {
-                             if let Ok(mut pending_lock) = state.pending_strafe.lock() {
-                                 *pending_lock = None;
-                             }
-                         }
-                    } else {
-                        // Ensure pending is clear if mode is off
+                    // 2. Clean up old pending strafes
+                    // Use a separate scope or check to avoid holding lock too long
+                    let mut should_clear = false;
+                    if let Ok(pending_lock) = state.pending_strafe.lock() {
+                        if let Some(pending) = &*pending_lock {
+                            if let Ok(elapsed) = pending.timestamp.elapsed() {
+                                if elapsed.as_millis() >= SHOT_WINDOW_MS {
+                                    should_clear = true;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if should_clear {
                         if let Ok(mut pending_lock) = state.pending_strafe.lock() {
-                             if pending_lock.is_some() {
-                                 *pending_lock = None;
-                             }
+                            *pending_lock = None;
                         }
                     }
 
-
-                    // 4. Movement Key Detection
+                    // 3. Movement Key Detection
                     if right_pressed && !DKey.is_pressed() && !RightKey.is_pressed() {
                         // D released
                         right_pressed = false;
