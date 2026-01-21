@@ -211,6 +211,14 @@ function Stats(props) {
         setLateAccuracy("0%");
     }
 
+    // Update parent copyMetrics if function provided (or exposing stats via ref/state up)
+    if (props.setMetrics) {
+        props.setMetrics({
+            total: totalCount,
+            accurateRate: totalCount > 0 ? (accurateCount / totalCount * 100).toFixed(2) : "0.00",
+            perfectRate: totalCount > 0 ? (perfectStrafes.length / totalCount * 100).toFixed(2) : "0.00"
+        });
+    }
 
     if (shotDelays && shotDelays.length > 0) {
       const sum = shotDelays.reduce((a, b) => a + b, 0);
@@ -261,12 +269,8 @@ function Stats(props) {
             <td>{draw_time(stats().early.std_deviation)}</td>
             <td>{draw_time(stats().late.std_deviation)}</td>
           </tr>
-          <tr 
-            onClick={props.onCopyMetrics} 
-            className="cursor-pointer hover:bg-white/10 active:bg-white/20 transition-colors"
-            title="Click to copy metrics: All, Early, Late;"
-          >
-            <th>Samples 📋</th>
+          <tr>
+            <th>Samples</th>
             <td>{(stats().alls.samples)}</td>
             <td>{(stats().early.samples)}</td>
             <td>{(stats().late.samples)}</td>
@@ -408,6 +412,7 @@ function App() {
   const [lateStrafes, setLateStrafes] = createSignal([]);
   const [perfectStrafes, setPerfectStrafes] = createSignal([]);
   const [shotDelays, setShotDelays] = createSignal([]);
+  const [metrics, setMetrics] = createSignal({ total: 0, accurateRate: "0.00", perfectRate: "0.00" });
 
   function resetStrafes() {
     setEarlyStrafes([]);
@@ -415,10 +420,11 @@ function App() {
     setPerfectStrafes([]);
     setTotalStrafes([]);
     setShotDelays([]);
+    setMetrics({ total: 0, accurateRate: "0.00", perfectRate: "0.00" });
   }
 
   function copyMetrics() {
-    const text = `${totalStrafes().length}, ${earlyStrafes().length}, ${lateStrafes().length};`;
+    const text = `${metrics().total}, ${metrics().accurateRate}%, ${metrics().perfectRate}%;`;
     navigator.clipboard.writeText(text);
   }
 
@@ -475,6 +481,7 @@ function App() {
           <div className="flex justify-between mb-2 items-center">
             <h2 className="select-none text-2xl font-bold">Statistics</h2>
             <div className="flex gap-2">
+                <button className="text-bright select-none shadow-md px-2 rounded-md bg-secondary hover:scale-110 " type="button" onClick={copyMetrics}>Copy</button>
                 <button className="text-bright select-none shadow-md px-2 rounded-md bg-primary hover:scale-110 " type="submit" onClick={() => {
                 resetStrafes()
                 }}>Reset</button>
@@ -486,7 +493,7 @@ function App() {
             perfectStrafes={perfectStrafes()} 
             shotDelays={shotDelays()}
             totalStrafes={totalStrafes()}
-            onCopyMetrics={copyMetrics}
+            setMetrics={setMetrics}
           ></Stats>
         </div>
         {/* B */}

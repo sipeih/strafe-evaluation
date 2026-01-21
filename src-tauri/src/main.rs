@@ -7,11 +7,10 @@ use std::sync::{
 };
 use std::thread::{self, sleep};
 use std::time::{Duration, SystemTime};
-use tauri::AppHandle;
 use tauri::Manager;
 use winapi::um::winuser::GetKeyboardLayout;
 
-const SHOT_WINDOW_MS: u128 = 500;
+const SHOT_WINDOW_MS: u128 = 300;
 
 #[derive(Clone, serde::Serialize)]
 struct Payload {
@@ -50,7 +49,6 @@ fn handle_strafe_emission(
 fn eval_understrafe(
     elapsed: Duration,
     released_time: &mut Option<SystemTime>,
-    app: AppHandle,
     state: Arc<GameState>,
 ) {
     let time_passed = elapsed.as_micros();
@@ -79,11 +77,10 @@ fn eval_understrafe(
 fn eval_overstrafe(
     elapsed: Duration,
     both_pressed_time: &mut Option<SystemTime>,
-    app: AppHandle,
     state: Arc<GameState>,
 ) {
     let time_passed = elapsed.as_micros();
-    if time_passed < (500 * 1000) {
+    if time_passed < (300 * 1000) {
         let payload = Payload {
             strafe_type: "Late".into(),
             duration: time_passed,
@@ -218,7 +215,6 @@ fn main() {
                                 Ok(elapsed) => eval_understrafe(
                                     elapsed,
                                     &mut right_released_time,
-                                    handle.clone(),
                                     state.clone(),
                                 ),
                                 Err(e) => {
@@ -240,7 +236,6 @@ fn main() {
                                 Ok(elapsed) => eval_understrafe(
                                     elapsed,
                                     &mut left_released_time,
-                                    handle.clone(),
                                     state.clone(),
                                 ),
                                 Err(e) => {
@@ -265,7 +260,6 @@ fn main() {
                                         eval_overstrafe(
                                             elapsed,
                                             &mut both_pressed_time,
-                                            handle.clone(),
                                             state.clone(),
                                         )
                                     }
