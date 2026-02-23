@@ -17,6 +17,7 @@ struct Payload {
     strafe_type: String,
     duration: u128,
     shot_delay: Option<u128>,
+    movement_duration: Option<u128>,
 }
 
 #[derive(Clone)]
@@ -49,6 +50,7 @@ fn handle_strafe_emission(
 fn eval_understrafe(
     elapsed: Duration,
     released_time: &mut Option<SystemTime>,
+    movement_duration: Option<u128>,
     state: Arc<GameState>,
 ) {
     let time_passed = elapsed.as_micros();
@@ -59,12 +61,14 @@ fn eval_understrafe(
             strafe_type: "Early".into(),
             duration: time_passed,
             shot_delay: None,
+            movement_duration,
         });
     } else if time_passed < 1600 {
         payload = Some(Payload {
             strafe_type: "Perfect".into(),
             duration: 0,
             shot_delay: None,
+            movement_duration,
         });
     }
 
@@ -77,6 +81,7 @@ fn eval_understrafe(
 fn eval_overstrafe(
     elapsed: Duration,
     both_pressed_time: &mut Option<SystemTime>,
+    movement_duration: Option<u128>,
     state: Arc<GameState>,
 ) {
     let time_passed = elapsed.as_micros();
@@ -85,6 +90,7 @@ fn eval_overstrafe(
             strafe_type: "Late".into(),
             duration: time_passed,
             shot_delay: None,
+            movement_duration,
         };
         handle_strafe_emission(&state, payload);
     }
@@ -118,6 +124,9 @@ fn main() {
                 let mut both_pressed_time: Option<SystemTime> = None;
                 let mut right_released_time: Option<SystemTime> = None;
                 let mut left_released_time: Option<SystemTime> = None;
+                let mut right_press_time: Option<SystemTime> = None;
+                let mut left_press_time: Option<SystemTime> = None;
+                let mut overlap_movement_dur: Option<u128> = None;
                 let is_azerty = is_azerty_layout();
 
                 // Mouse state tracking for click detection (simple edge detection)
@@ -206,17 +215,22 @@ fn main() {
                     {
                         // A pressed
                         left_pressed = true;
+                        left_press_time = Some(SystemTime::now());
                         if let Err(e) = handle.emit_all("a-pressed", ()) {
                             eprintln!("Failed to emit a-pressed: {}", e);
                         }
                         match right_released_time {
                             None => {}
                             Some(x) => match x.elapsed() {
-                                Ok(elapsed) => eval_understrafe(
-                                    elapsed,
-                                    &mut right_released_time,
-                                    state.clone(),
-                                ),
+                                Ok(elapsed) => {
+                                    let mov_dur = right_press_time.and_then(|t| x.duration_since(t).ok().map(|d| d.as_micros()));
+                                    eval_understrafe(
+                                        elapsed,
+                                        &mut right_released_time,
+                                        mov_dur,
+                                        state.clone(),
+                                    )
+                                },
                                 Err(e) => {
                                     println!("Error: {e:?}");
                                 }
@@ -227,17 +241,22 @@ fn main() {
                     if (DKey.is_pressed() || RightKey.is_pressed()) && !right_pressed {
                         // D pressed
                         right_pressed = true;
+                        right_press_time = Some(SystemTime::now());
                         if let Err(e) = handle.emit_all("d-pressed", ()) {
                             eprintln!("Failed to emit d-pressed: {}", e);
                         }
                         match left_released_time {
                             None => {}
                             Some(x) => match x.elapsed() {
-                                Ok(elapsed) => eval_understrafe(
-                                    elapsed,
-                                    &mut left_released_time,
-                                    state.clone(),
-                                ),
+                                Ok(elapsed) => {
+                                    let mov_dur = left_press_time.and_then(|t| x.duration_since(t).ok().map(|d| d.as_micros()));
+                                    eval_understrafe(
+                                        elapsed,
+                                        &mut left_released_time,
+                                        mov_dur,
+                                        state.clone(),
+                                    )
+                                },
                                 Err(e) => {
                                     println!("Error: {e:?}");
                                 }
@@ -248,6 +267,14 @@ fn main() {
                     // Evaluation
                     if left_pressed && right_pressed && both_pressed_time == None {
                         both_pressed_time = Some(SystemTime::now());
+                        let r_dur = right_press_time.and_then(|t| t.elapsed().ok().map(|d| d.as_micros()));
+                        let l_dur = left_press_time.and_then(|t| t.elapsed().ok().map(|d| d.as_micros()));
+                        overlap_movement_dur = match (r_dur, l_dur) {
+                            (Some(r), Some(l)) => Some(r.max(l)),
+                            (Some(r), None) => Some(r),
+                            (None, Some(l)) => Some(l),
+                            _ => None,
+                        };
                     }
 
                     if (!left_pressed || !right_pressed) && both_pressed_time != None {
@@ -260,6 +287,7 @@ fn main() {
                                         eval_overstrafe(
                                             elapsed,
                                             &mut both_pressed_time,
+                                            overlap_movement_dur,
                                             state.clone(),
                                         )
                                     }

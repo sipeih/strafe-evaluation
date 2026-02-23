@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "PatrikZeros-Strafe-Evaluation",
+    "productName": "SMNH-Strafe-Evaluation",
     "version": "1.2.0"
   },
   "tauri": {

@@ -158,9 +158,13 @@ function Stats(props) {
       return prev
     })
     
-    // Calculate Accuracy based on new definitions
-    // Late: Accurate if (duration/1000 + shot_delay) >= 230ms
-    // Early/Perfect: Accurate if shot_delay >= 80ms
+    // Unified accuracy: friction_time/230 + counter_strafe_time/80 >= velocityFactor
+    // Both gap (Early) and overlap (Late) are friction-only phases in CS2
+    // 230ms = friction-only time to accuracy from max velocity (from CS2 Kitchen video)
+    // 80ms = active counter-strafe time to accuracy from max velocity (from CS2 Kitchen script)
+    // Velocity scales via exponential model: v(t) = v_max * (1 - e^(-t/τ)), τ ≈ 143ms
+    // Derived from Source engine accel formula where wishspeed scales acceleration proportionally
+    const ACCEL_TAU_MS = 143;
     let accurateCount = 0;
     let totalCount = totalStrafes.length;
     let earlyTotal = 0;
@@ -171,23 +175,18 @@ function Stats(props) {
     totalStrafes.forEach(strafe => {
         const shotDelay = strafe.shot_delay || 0;
         const durationMs = strafe.duration / 1000;
-        let isAccurate = false;
+        const movDurMs = strafe.movement_duration != null ? strafe.movement_duration / 1000 : null;
+
+        const velocityFactor = movDurMs != null ? 1 - Math.exp(-movDurMs / ACCEL_TAU_MS) : 1.0;
+        const accuracyScore = (durationMs / 230) + (shotDelay / 80);
+        const isAccurate = accuracyScore >= velocityFactor;
 
         if (strafe.type === "Late") {
             lateTotal++;
-            // Total time since counter key pressed = Overlap Duration + Shot Delay
-            if ((durationMs + shotDelay) >= 230) {
-                isAccurate = true;
-                lateAccurate++;
-            }
+            if (isAccurate) lateAccurate++;
         } else {
-            // Early or Perfect
             earlyTotal++;
-            // Time since counter key pressed = Shot Delay
-            if (shotDelay >= 80) {
-                isAccurate = true;
-                earlyAccurate++;
-            }
+            if (isAccurate) earlyAccurate++;
         }
 
         if (isAccurate) accurateCount++;
@@ -436,7 +435,8 @@ function App() {
         let strafe = { 
             type: event.payload.strafe_type, 
             duration: event.payload.duration,
-            shot_delay: event.payload.shot_delay 
+            shot_delay: event.payload.shot_delay,
+            movement_duration: event.payload.movement_duration
         }
         
         if (strafe.shot_delay !== null && strafe.shot_delay !== undefined) {
@@ -515,6 +515,9 @@ function App() {
             <p className="text-center text-xs">{draw_time(strafe.duration)}</p>
             {strafe.shot_delay != null && (
                  <p className="text-center text-xs text-bright font-semibold mt-1">Shot: {strafe.shot_delay}ms</p>
+            )}
+            {strafe.movement_duration != null && (
+                 <p className="text-center text-xs opacity-60">Mov: {(strafe.movement_duration / 1000).toFixed(0)}ms</p>
             )}
           </div>
         }</For>
