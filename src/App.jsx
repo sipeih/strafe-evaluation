@@ -64,6 +64,30 @@ function getOccurance(duration_array) {
   return out
 }
 
+const ACCURATE_SPEED_RATIO = 0.34;
+const SPEED_TO_REMOVE_FROM_FULL = 1 - ACCURATE_SPEED_RATIO;
+const START_SPEED_TAU_MS = 143;
+const FRICTION_TO_ACCURATE_MS = 230;
+const ACTIVE_COUNTER_TO_ACCURATE_MS = 80;
+
+function calculateAccuracy(strafe) {
+  const frictionMs = strafe.duration / 1000;
+  const activeCounterMs = strafe.shot_delay || 0;
+  const movementDurationMs = strafe.movement_duration != null ? strafe.movement_duration / 1000 : null;
+
+  const startSpeed = movementDurationMs != null
+    ? 1 - Math.exp(-movementDurationMs / START_SPEED_TAU_MS)
+    : 1.0;
+  const requiredProgress = Math.max(0, (startSpeed - ACCURATE_SPEED_RATIO) / SPEED_TO_REMOVE_FROM_FULL);
+  const actualProgress = (frictionMs / FRICTION_TO_ACCURATE_MS) + (activeCounterMs / ACTIVE_COUNTER_TO_ACCURATE_MS);
+  const speedAtShot = Math.max(0, startSpeed - (actualProgress * SPEED_TO_REMOVE_FROM_FULL));
+
+  return {
+    isAccurate: actualProgress >= requiredProgress,
+    speedAtShot,
+  };
+}
+
 const MyChart = (props) => {
   const labels = Array.from({ length: 201 / 5 + 1 }, (_, i) => i * 5);
   const [chartData, setChartData] = createSignal({
@@ -140,6 +164,7 @@ function Stats(props) {
   const [stats, setStats] = createSignal({ alls: getStats([]), early: getStats([]), late: getStats([]) }, { equals: false });
   const [perfectCount, setPerfectCount] = createSignal(0)
   const [avgShotDelay, setAvgShotDelay] = createSignal(0);
+  const [avgSpeedAtShot, setAvgSpeedAtShot] = createSignal(0);
   
   // New metrics
   const [accurateRate, setAccurateRate] = createSignal(0);
@@ -158,28 +183,20 @@ function Stats(props) {
       return prev
     })
     
-    // Unified accuracy: friction_time/230 + counter_strafe_time/80 >= velocityFactor
-    // Both gap (Early) and overlap (Late) are friction-only phases in CS2
-    // 230ms = friction-only time to accuracy from max velocity (from CS2 Kitchen video)
-    // 80ms = active counter-strafe time to accuracy from max velocity (from CS2 Kitchen script)
-    // Velocity scales via exponential model: v(t) = v_max * (1 - e^(-t/τ)), τ ≈ 143ms
-    // Derived from Source engine accel formula where wishspeed scales acceleration proportionally
-    const ACCEL_TAU_MS = 143;
+    // Threshold-correct model:
+    // 230ms friction-only and 80ms active counter-strafe both mean full speed to 34% accurate speed.
+    // movement_duration estimates normalized starting speed before deceleration begins.
     let accurateCount = 0;
     let totalCount = totalStrafes.length;
     let earlyTotal = 0;
     let earlyAccurate = 0;
     let lateTotal = 0;
     let lateAccurate = 0;
+    let speedAtShotTotal = 0;
 
     totalStrafes.forEach(strafe => {
-        const shotDelay = strafe.shot_delay || 0;
-        const durationMs = strafe.duration / 1000;
-        const movDurMs = strafe.movement_duration != null ? strafe.movement_duration / 1000 : null;
-
-        const velocityFactor = movDurMs != null ? 1 - Math.exp(-movDurMs / ACCEL_TAU_MS) : 1.0;
-        const accuracyScore = (durationMs / 230) + (shotDelay / 80);
-        const isAccurate = accuracyScore >= velocityFactor;
+        const { isAccurate, speedAtShot } = calculateAccuracy(strafe);
+        speedAtShotTotal += speedAtShot;
 
         if (strafe.type === "Late") {
             lateTotal++;
@@ -194,8 +211,10 @@ function Stats(props) {
 
     if (totalCount > 0) {
         setAccurateRate((accurateCount / totalCount * 100).toFixed(2));
+        setAvgSpeedAtShot(speedAtShotTotal / totalCount);
     } else {
         setAccurateRate(0);
+        setAvgSpeedAtShot(0);
     }
 
     if (earlyTotal > 0) {
@@ -289,6 +308,9 @@ function Stats(props) {
         </div>
         <div className="font-bold text-lg text-accent">
             <h2>Avg Shot Delay: {avgShotDelay().toFixed(0)} ms</h2>
+        </div>
+        <div className="font-bold text-lg text-accent">
+            <h2>Avg Est. Speed: {(avgSpeedAtShot() * 100).toFixed(1)}%</h2>
         </div>
       </div>
     </div>
@@ -519,6 +541,7 @@ function App() {
             {strafe.movement_duration != null && (
                  <p className="text-center text-xs opacity-60">Mov: {(strafe.movement_duration / 1000).toFixed(0)}ms</p>
             )}
+            <p className="text-center text-xs opacity-60">Spd: {(calculateAccuracy(strafe).speedAtShot * 100).toFixed(0)}%</p>
           </div>
         }</For>
       </div>
